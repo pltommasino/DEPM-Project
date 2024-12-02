@@ -25,8 +25,9 @@ library(TCGAbiolinks)
 library(SummarizedExperiment)
 library(DT)
 
+setwd("~/Documents/GitHub/DEPM-OLD")
 proj <- "TCGA-LUSC"
-dir.create(file.path(proj))
+#dir.create(file.path(proj))
 
 ##### Data Primary Tumor
 rna.query.C <- GDCquery(project = proj, data.category = "Transcriptome Profiling",
@@ -34,7 +35,7 @@ rna.query.C <- GDCquery(project = proj, data.category = "Transcriptome Profiling
                         workflow.type = "STAR - Counts",
                         sample.type = "Primary Tumor")
 
-GDCdownload(query = rna.query.C, directory = "GDCdata", method = "api")
+#GDCdownload(query = rna.query.C, directory = "GDCdata", method = "api")
 rna.data.C <- GDCprepare(rna.query.C, directory = "GDCdata")
 rna.expr.data.C <- assay(rna.data.C)
 
@@ -47,8 +48,8 @@ rna.query.N <- GDCquery(project = proj, data.category = "Transcriptome Profiling
                         workflow.type = "STAR - Counts", 
                         sample.type = "Solid Tissue Normal")
 
-GDCdownload(query = rna.query.N, directory = "GDCdata", method = "api")
-rna.data.N <- GDCprepare(rna.query.N, directory = "GDCdata"  )
+#GDCdownload(query = rna.query.N, directory = "GDCdata", method = "api")
+rna.data.N <- GDCprepare(rna.query.N, directory = "GDCdata")
 rna.expr.data.N <- assay(rna.data.N)
 
 genes.info2 <- BiocGenerics::as.data.frame(rowRanges(rna.data.N))
@@ -57,18 +58,18 @@ all(na.omit(genes.info2) == na.omit(genes.info))
 clinical.query<- GDCquery_clinic(project = proj, type = "clinical", save.csv = FALSE)
 #write.csv(clinical.query, file = file.path(proj,paste(proj, "_clinical_data.txt",sep="")), row.names = FALSE, quote = FALSE)
 
-View(clinical.query)
+#View(clinical.query)
 table(clinical.query$ajcc_pathologic_stage)
 
 boxplot(age_at_index ~ ajcc_pathologic_stage, data = clinical.query,
         col = "gold", main = "Title", xlab = "", ylab= "age", las=2 )
 
 
-View(rna.expr.data.N)
+#View(rna.expr.data.N)
 
-dim(rna.expr.data.C)
-dim(rna.expr.data.N)
-length(unique(clinical.query$submitter_id))
+# dim(rna.expr.data.C)
+# dim(rna.expr.data.N)
+# length(unique(clinical.query$submitter_id))
 
 
 
@@ -122,3 +123,136 @@ any(is.nan(as.matrix(expr.N))) #ok
 
 #let's consider only patients for which we have both normal and cancer samples
 expr.C <- expr.C[, colnames(expr.N)]
+
+
+#3: Normalizing data with Deseq2 ----- 
+
+#detalied explanation: https://hbctrzaining.github.io/DGE_workshop/lessons/02_DGE_count_normalization.html
+#youtube explanation: https://www.youtube.com/watch?v=UFB993xufUU
+
+all(rownames(expr.C) == rownames(expr.N))
+full.data <- cbind(expr.N, expr.C)
+
+dim(full.data) #60660    38 -------> 60660   102
+full.data <- data.frame(full.data)
+
+metad <- rep("cancer", 102)
+metad[1:51] <- "normal"
+metad
+metad <- data.frame(metad)
+rownames(metad) <- colnames(full.data)
+colnames(metad)[1] <- "condition"
+metad[,1] <- as.factor(metad[,1])
+full.data <- cbind(rownames(full.data), full.data)
+
+dds <- DESeqDataSetFromMatrix(countData=full.data, 
+                              colData=metad, 
+                              design= ~condition,
+                              tidy=TRUE)
+
+#View(counts(dds))
+dim(counts(dds))
+
+# filtering: at least ten counts on 90% of patients? 
+( 102*90 )/100
+keep <- rowSums(counts(dds) >= 10) >= 91
+dds <- dds[keep,]
+dim(counts(dds))
+
+dds <- estimateSizeFactors(dds)
+normalized_counts <- counts(dds, normalized=TRUE)
+sum(rowSums(normalized_counts == 0) == 102) #no null rows
+
+
+filtr.expr.n <- as.data.frame(normalized_counts[, 1:51])
+filtr.expr.c <- as.data.frame(normalized_counts[, 52:102])
+#cancerous sample names were added a ".1" in full.data because  
+#they had the same names as the normal samples
+colnames(filtr.expr.c) <- substr(colnames(filtr.expr.c), 1,12)
+
+#4: Gene selection ----
+
+genes <- read.csv2("targets.csv", row.names = 1)
+genes <- genes[,1]
+head(genes) #gene symbols, not ensemble ids
+
+#their enseble ids 
+genes.info[ genes.info$gene_name %in% genes ,"gene_id"]
+#not all of them might be among our genes!
+
+genes.c <- intersect(rownames(filtr.expr.c), 
+                     genes.info[ genes.info$gene_name %in% genes , "gene_id"]   ) 
+
+genes.n <- intersect(rownames(filtr.expr.n),  
+                     genes.info2[ genes.info2$gene_name %in% genes , "gene_id"]   )  
+
+setdiff(genes.c, genes.n)
+
+length(genes)
+length(genes.c)
+length(genes.n)
+
+filtr.expr.n <- filtr.expr.n[genes.n, ]
+filtr.expr.c <- filtr.expr.c[genes.c, ]
+
+rownames(filtr.expr.n) <- genes.info2[genes.n, "gene_name"]
+rownames(filtr.expr.c) <- genes.info[genes.c, "gene_name"]
+
+
+#5: Differentially expressed genes (DEGs) (+ brief enrichment overview) ----- 
+
+#what are DEGs?
+fc <-  log2(rowMeans(filtr.expr.c) / rowMeans(filtr.expr.n) ) 
+names(fc) <- rownames(filtr.expr.c)
+head(fc)
+#what is the fold change?
+
+pval.fc <- sapply(1:nrow(filtr.expr.c), function(i) (t.test(as.numeric(filtr.expr.c[i,]), as.numeric(filtr.expr.n[i,]), paired = T ))$p.value)
+pval.fc.fdr <- p.adjust(pval.fc, method="fdr")
+
+expr.table <- data.frame(cbind(fc, pval.fc.fdr))
+expr.table[,1] <- round(expr.table[,1],2)
+#expr.table[,2] <- format(expr.table[,2], digits = 4) nice for printing but it converts to string
+
+deg.genes <- rownames(expr.table[abs(expr.table$fc) >= 1.5 & expr.table$pval.fc.fdr <=0.01,]) 
+deg.genes
+
+head(expr.table[deg.genes,], 10)
+# fc        pval.fc.fdr
+# GCLC     3.19 5.157093e-06
+# ENPP4   -2.12 5.798913e-20
+# PRSS22   1.88 5.456300e-04
+# ALDH3B1 -2.96 4.012309e-17
+# DBF4     1.97 4.667448e-16
+# E2F2     2.99 1.872244e-15
+# NCAPD2   2.32 3.496074e-14
+# BRCA1    2.23 2.484447e-14
+# SNAI2    2.11 2.822504e-11
+# HGF     -2.04 1.178866e-12
+
+
+#write.table(expr.table[deg.genes,], file = "DEG.csv", sep = ";")
+
+
+#volcano plot
+
+expr.table$diffexpressed <- "NO";
+expr.table$diffexpressed[expr.table$fc >= 1.2 & expr.table$pval.fc.fdr <= 0.05] <- "UP"
+expr.table$diffexpressed[expr.table$fc <= -1.2 & expr.table$pval.fc.fdr <= 0.05] <- "DOWN"
+head(expr.table)
+
+expr.table$diffexpressed <- as.factor(expr.table$diffexpressed)
+summary(expr.table$diffexpressed)
+
+ggplot(data=expr.table, aes(x=fc, y=-log10(pval.fc.fdr), col=diffexpressed))+  
+  geom_point() +
+  xlab("fold change (log2)") + 
+  ylab("-log10 adjusted p-value") +
+  geom_hline(yintercept=-log10(0.05), col="red")+
+  geom_vline(xintercept=1.2, col="red")+
+  geom_vline(xintercept=-1.2, col="red")
+
+
+# print and enrichment 
+cat(deg.genes , sep = "\n")
+#enrichR
