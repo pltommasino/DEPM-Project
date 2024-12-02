@@ -50,3 +50,8 @@ rsconnect/
 
 #Apple
 .DS_Store
+
+#Our file
+MANIFEST.txt
+TCGA-LUSC/
+GDCdata/

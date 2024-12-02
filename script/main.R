@@ -1,16 +1,19 @@
-if (!require("BiocManager", quietly = TRUE))
-  install.packages("BiocManager")
-
-#BiocManager::install("BiocGenerics")
-#BiocManager::install("DESeq2")
+# if (!require("BiocManager", quietly = TRUE))
+#   install.packages("BiocManager")
+# 
+# BiocManager::install("BiocGenerics")
+# BiocManager::install("DESeq2")
+# BiocManager::install("TCGAbiolinks")
+# install.packages("NetworkToolbox")
+# install.packages("DT")
+# install.packages("psych")
+# library(devtools)
+# devtools::install_github("briatte/ggnet")
 
 library(BiocGenerics) 
 library(DESeq2)
-#install.packages("psych")
 library(psych)
-#install.packages("NetworkToolbox")
 library(NetworkToolbox)
-#devtools::install_github("briatte/ggnet")
 library(ggplot2); library(ggnet)
 library(GGally);library(sna);library(network)
 
@@ -18,16 +21,14 @@ library(GGally);library(sna);library(network)
 
 #1: Downloading data from the TGCA -------
 
-#BiocManager::install("TCGAbiolinks")
 library(TCGAbiolinks)
 library(SummarizedExperiment)
-install.packages("DT")
 library(DT)
 
 proj <- "TCGA-LUSC"
 dir.create(file.path(proj))
 
-
+##### Data Primary Tumor
 rna.query.C <- GDCquery(project = proj, data.category = "Transcriptome Profiling",
                         data.type = "Gene Expression Quantification",
                         workflow.type = "STAR - Counts",
@@ -37,9 +38,10 @@ GDCdownload(query = rna.query.C, directory = "GDCdata", method = "api")
 rna.data.C <- GDCprepare(rna.query.C, directory = "GDCdata")
 rna.expr.data.C <- assay(rna.data.C)
 
-View(BiocGenerics::as.data.frame(rowRanges(rna.data.C)))
+#View(BiocGenerics::as.data.frame(rowRanges(rna.data.C)))
 genes.info <- BiocGenerics::as.data.frame(rowRanges(rna.data.C))
 
+##### Solid Tissue Normal
 rna.query.N <- GDCquery(project = proj, data.category = "Transcriptome Profiling", 
                         data.type = "Gene Expression Quantification", 
                         workflow.type = "STAR - Counts", 
@@ -120,13 +122,3 @@ any(is.nan(as.matrix(expr.N))) #ok
 
 #let's consider only patients for which we have both normal and cancer samples
 expr.C <- expr.C[, colnames(expr.N)]
-
-#let's assume we only want female patients
-women <- (clinical.query[clinical.query$gender == "female", ])$submitter_id
-women
-women <- women[1:216]
-
-length(intersect(colnames(expr.C), women)) #19
-
-expr.C <- expr.C[, intersect(colnames(expr.C), women)]
-expr.N <- expr.N[, intersect(colnames(expr.C), women)]
