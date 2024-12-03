@@ -214,25 +214,21 @@ expr.table <- data.frame(cbind(fc, pval.fc.fdr))
 expr.table[,1] <- round(expr.table[,1],2)
 #expr.table[,2] <- format(expr.table[,2], digits = 4) nice for printing but it converts to string
 
-deg.genes <- rownames(expr.table[abs(expr.table$fc) >= 1.5 & expr.table$pval.fc.fdr <=0.01,]) 
+deg.genes <- rownames(expr.table[abs(expr.table$fc) >= 1.2 & expr.table$pval.fc.fdr <=0.05,]) 
 deg.genes
 
 head(expr.table[deg.genes,], 10)
-# fc        pval.fc.fdr
+# fc  pval.fc.fdr
 # GCLC     3.19 5.157093e-06
 # ENPP4   -2.12 5.798913e-20
 # PRSS22   1.88 5.456300e-04
 # ALDH3B1 -2.96 4.012309e-17
 # DBF4     1.97 4.667448e-16
 # E2F2     2.99 1.872244e-15
+# JARID2   1.32 3.755466e-13
 # NCAPD2   2.32 3.496074e-14
 # BRCA1    2.23 2.484447e-14
 # SNAI2    2.11 2.822504e-11
-# HGF     -2.04 1.178866e-12
-
-
-#write.table(expr.table[deg.genes,], file = "DEG.csv", sep = ";")
-
 
 #volcano plot
 
@@ -256,3 +252,198 @@ ggplot(data=expr.table, aes(x=fc, y=-log10(pval.fc.fdr), col=diffexpressed))+
 # print and enrichment 
 cat(deg.genes , sep = "\n")
 #enrichR
+
+
+
+#6: Adjacency matrices of co-expression networks -----
+
+#### --- Cancer network
+
+#Creating the correlation matrix for the “cancer” group
+cor.mat.c <- corr.test(t(filtr.expr.c), use = "pairwise", 
+                       method = "spearman",adjust="fdr",ci=FALSE)
+
+#the correlation matrix (\rho).
+rho.c <- cor.mat.c$r
+diag(rho.c) <- 0
+
+#the matrix of p-values associated with the correlations.
+qval.c <- cor.mat.c$p
+#qvals are reported on the upper triangle only
+qval.c[lower.tri(qval.c)] <- t(qval.c)[lower.tri(qval.c)]
+
+#Creating the adjacency matrix for the “cancer” group
+#adj.mat.c <- rho.c * (qval.c <= 0.01)
+#adj.mat.c <- ifelse(abs(rho.c) >= 0.7, 1, 0)
+#sum(adj.mat.c) #1760
+
+#adj.mat.c1 <- ifelse(abs(rho.c) >= 0.7 * (qval.c >= 0.01), 1, 0)
+#sum(adj.mat.c1) #37190
+
+adj.mat.c <- ifelse(abs(rho.c) >= 0.65, 1, 0) * (qval.c <= 1e-4)
+#sum(adj.mat.c) #1760
+
+
+#### --- Normal network 
+cor.mat.n <- corr.test(t(filtr.expr.n), use = "pairwise", 
+                       method = "spearman",adjust="fdr",ci=FALSE)
+
+rho.n <- cor.mat.n$r
+diag(rho.n) <- 0
+qval.n <- cor.mat.n$p
+qval.n[lower.tri(qval.n)] <- t(qval.n)[lower.tri(qval.n)]
+
+adj.mat.n <- ifelse(abs(rho.n) >= 0.65, 1, 0) * (qval.n <= 1e-4)
+
+#7: Co-expression networks ----
+
+#Cancer network 
+
+net.c <- network(adj.mat.c, matrix.type="adjacency",ignore.eval = FALSE, 
+                 names.eval = "weights", directed = F)
+
+network.density(net.c)
+network.size(net.c)
+network.edgecount(net.c) 
+#nrow(component.largest(net.c, result = "graph")) #1446
+clustcoeff(adj.mat.c, weighted = FALSE)$CC
+
+sum(adj.mat.c != 0) / 2
+#how many positive/negative correlations? 
+sum(adj.mat.c > 0) / 2
+sum(adj.mat.c < 0) / 2
+
+degree.c <- rowSums(adj.mat.c != 0)
+names(degree.c) <- rownames(adj.mat.c)
+degree.c <- sort(degree.c, decreasing = T)
+head(degree.c,10)
+sum(degree.c == 0) #81 unconnected nodes 
+
+hist(degree.c)
+x <- quantile(degree.c[degree.c>0],0.95) #how big is the degree of the most connected nodes?
+x
+hist(degree.c)
+abline(v=x, col="red")
+
+hubs.c <- degree.c[degree.c>=x]
+names(hubs.c) #
+
+net.c %v% "type" = ifelse(network.vertex.names(net.c) %in% names(hubs.c),"hub", "non-hub")
+net.c %v% "color" = ifelse(net.c %v% "type" == "hub", "tomato", "deepskyblue3")
+network::set.edge.attribute(net.c, "edgecolor", ifelse(net.c %e% "weights" > 0, "red", "blue"))
+
+#coord.c <- gplot.layout.fruchtermanreingold(net.c, NULL)
+#net.c %v% "x" = coord.c[, 1]
+#net.c %v% "y" = coord.c[, 2]
+
+ggnet2(net.c, color = "color", alpha = 0.7, size = 2,  #mode= c("x","y"),
+       edge.color = "edgecolor", edge.alpha = 1, edge.size = 0.15)+
+  guides(size = "none") 
+
+#this is extremely dense... what if we lower the pval threshold?
+#what if it's even lower?
+#adj.mat.c <- rho.c * (qval.c <= 1e-3)
+#adj.mat.c <- rho.c * (qval.c <= 1e-4) #too much?
+
+
+#might be useful to look at negative and postive edges separately:
+net.c1 <- network(adj.mat.c* (adj.mat.c > 0),
+                  matrix.type="adjacency",ignore.eval = FALSE, names.eval = "weights")
+
+ggnet2(net.c1, color = "deepskyblue3", alpha = 0.7, size = 2, 
+       edge.color = "red", edge.alpha = 1, edge.size = 0.15)+
+  guides(size = "none") 
+
+
+net.c2 <- network(adj.mat.c* (adj.mat.c < 0),
+                  matrix.type="adjacency",ignore.eval = FALSE, names.eval = "weights")
+
+ggnet2(net.c2, color = "deepskyblue3", alpha = 0.7, size = 2, 
+       edge.color = "blue", edge.alpha = 1, edge.size = 0.15)+
+  guides(size = "none") 
+
+
+#Normal network 
+
+net.n <- network(adj.mat.n, matrix.type="adjacency",ignore.eval = FALSE, names.eval = "weights")
+
+network.density(net.n)
+network.size(net.n)
+network.edgecount(net.n)
+clustcoeff(adj.mat.n, weighted = FALSE)$CC
+#nrow(component.largest(net.n, result = "graph")) #1396
+
+sum(adj.mat.n != 0) /2
+#how many positive/negative correlations? 
+sum(adj.mat.n > 0) /2
+sum(adj.mat.n < 0) /2
+
+degree.n <- rowSums(adj.mat.n != 0)
+names(degree.n) <- rownames(adj.mat.n)
+degree.n <- sort(degree.n, decreasing = T)
+head(degree.n,10)
+sum(degree.n == 0) #unconnected nodes 
+
+hist(degree.n)
+y <- quantile(degree.n[degree.n>0],0.95) #how big is the degree of the most connected nodes?
+y
+hist(degree.n)
+abline(v=y, col="red")
+
+hubs.n <- degree.n[degree.n>=y]
+names(hubs.n) #
+
+net.n %v% "type" = ifelse(network.vertex.names(net.n) %in% names(hubs.n),"hub", "non-hub")
+net.n %v% "color" = ifelse(net.n %v% "type" == "hub", "tomato", "deepskyblue3")
+set.edge.attribute(net.n, "edgecolor", ifelse(net.n %e% "weights" > 0, "red", "blue"))
+
+ggnet2(net.n, color = "color", alpha = 0.7, size = 2,
+       edge.color = "edgecolor", edge.alpha = 1, edge.size = 0.15)+
+  guides(size = "none") 
+
+#this is extremely dense... what if we change the pval threshold?
+adj.mat.n <- rho.c * (qval.c <= 1e-3) 
+adj.mat.n <- rho.c * (qval.c <= 1e-4) #too much?
+
+
+intersect(names(hubs.c), names(hubs.n))
+
+
+#8: Plotting the hub subnetwork -----
+
+hubs.c
+hubs.c.ids <- vector("integer",length(hubs.c))
+for (i in 1:length(hubs.c)){hubs.c.ids[i] <- match(names(hubs.c)[i],rownames(adj.mat.c))}
+hubs.c.ids
+
+#identifying the neighborhood
+hubs.c.neigh <- c()
+for (f in hubs.c.ids){
+  hubs.c.neigh <- append(hubs.c.neigh, get.neighborhood(net.c, f))
+}
+
+hubs.c.neigh <- unique(hubs.c.neigh)
+hubs.c.neigh
+hubs.c.neigh.names <- rownames(adj.mat.c[hubs.c.neigh,])
+subnet <- unique(c(names(hubs.c), hubs.c.neigh.names))
+
+#creating the subnetwork
+hub.c.adj <- adj.mat.c[subnet, subnet]
+
+head(rownames(hub.c.adj))
+head(colnames(hub.c.adj))
+
+net.hub <- network(hub.c.adj, matrix.type="adjacency",ignore.eval = FALSE, names.eval = "weights")
+network.density(net.hub)
+
+sum(hub.c.adj > 0 )
+sum(hub.c.adj < 0)
+
+net.hub %v% "type" = ifelse(network.vertex.names(net.hub) %in% names(hubs.c),"hub", "non-hub")
+net.hub %v% "color" = ifelse(net.hub %v% "type" == "non-hub", "deepskyblue3", "tomato")
+set.edge.attribute(net.hub, "ecolor", ifelse(net.hub %e% "weights" > 0, "red", "blue"))
+
+ggnet2(net.hub,  color = "color",alpha = 0.9, size = 2, 
+       edge.color = "ecolor", edge.alpha = 0.9,  edge.size = 0.15, 
+       node.label = names(hubs.c), label.color = "black", label.size = 3)+
+  guides(size = "none") 
