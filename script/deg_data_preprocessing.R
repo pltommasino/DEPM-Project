@@ -1,4 +1,5 @@
 #Here we import the necessary libraries
+library(DESeq2)
 library(TCGAbiolinks)
 library(SummarizedExperiment)
 
@@ -7,7 +8,6 @@ library(SummarizedExperiment)
 # - Gene expression data for primary tumor samples
 # - Gene expression data for solid tissue normal samples
 #The workflow type indicates the method used to generate the data. In this case, the data was generated using the STAR aligner and the counts were quantified.
-
 
 #Here we create a directory to store the data for the LUSC project
 proj <- "TCGA-LUSC"
@@ -24,6 +24,8 @@ GDCdownload(query = rna.query.C, directory = "GDCdata", method = "api")
 #Now, we prepare the data for analysis
 rna.data.C <- GDCprepare(rna.query.C, directory = "GDCdata")
 rna.expr.data.C <- assay(rna.data.C)
+#It is of interest also to know the genes that are being analyzed
+genes.info.C <- BiocGenerics::as.data.frame(rowRanges(rna.data.C))
 
 #Now, we do the same for the solid tissue normal samples
 rna.query.N <- GDCquery(project = proj, data.category = "Transcriptome Profiling", 
@@ -35,6 +37,8 @@ GDCdownload(query = rna.query.N, directory = "GDCdata", method = "api")
 #Now, we prepare the data for analysis
 rna.data.N <- GDCprepare(rna.query.N, directory = "GDCdata")
 rna.expr.data.N <- assay(rna.data.N)
+#It is of interest also to know the genes that are being analyzed
+genes.info.N <- BiocGenerics::as.data.frame(rowRanges(rna.data.N))
 
 
 
@@ -75,5 +79,40 @@ expr.C <- expr.C[, colnames(expr.N)]
 full.data <- cbind(expr.N, expr.C)
 full.data <- data.frame(full.data)
 
+## PART 3: Data Normalization ---
+#Here we use the DESEQ2 package to normalize the data
 
-expr.C <- expr.C[, colnames(expr.N)]
+
+metad <- rep("cancer", ncol(full.data))
+metad[1:(ncol(full.data)/2)] <- "normal"
+metad <- data.frame(metad)
+rownames(metad) <- colnames(full.data)
+colnames(metad)[1] <- "condition"
+metad[,1] <- as.factor(metad[,1])
+
+full.data <- cbind(rownames(full.data), full.data)
+
+dds <- DESeqDataSetFromMatrix(countData=full.data, 
+                              colData=metad, 
+                              design= ~condition,
+                              tidy=TRUE)
+
+View(counts(dds))
+dim(counts(dds))
+
+# filtering: at least ten counts on 90% of patients? 
+( 38*90 )/100
+keep <- rowSums(counts(dds) >= 10) >= 34
+dds <- dds[keep,]
+dim(counts(dds))
+
+dds <- estimateSizeFactors(dds)
+normalized_counts <- counts(dds, normalized=TRUE)
+sum(rowSums(normalized_counts == 0) == 38) #no null rows
+
+
+filtr.expr.n <- as.data.frame(normalized_counts[, 1:19])
+filtr.expr.c <- as.data.frame(normalized_counts[, 20:38])
+#cancerous sample names were added a ".1" in full.data because  
+#they had the same names as the normal samples
+colnames(filtr.expr.c) <- substr(colnames(filtr.expr.c), 1,12)
