@@ -16,14 +16,15 @@ library(psych)
 library(NetworkToolbox)
 library(ggplot2); library(ggnet)
 library(GGally);library(sna);library(network)
-
-# PART 1 
-
-#1: Downloading data from the TGCA -------
-
 library(TCGAbiolinks)
 library(SummarizedExperiment)
 library(DT)
+
+# PART 1 
+
+#1: Data ----
+
+#Downloading data from the TGCA
 
 setwd("~/Documents/GitHub/DEPM-OLD")
 proj <- "TCGA-LUSC"
@@ -73,7 +74,7 @@ boxplot(age_at_index ~ ajcc_pathologic_stage, data = clinical.query,
 
 
 
-#2: Data cleaning -----
+#Data cleaning
 
 ncol(rna.expr.data.C)
 head(colnames(rna.expr.data.C))
@@ -125,7 +126,8 @@ any(is.nan(as.matrix(expr.N))) #ok
 expr.C <- expr.C[, colnames(expr.N)]
 
 
-#3: Normalizing data with Deseq2 ----- 
+
+#Normalizing data with Deseq2
 
 #detalied explanation: https://hbctrzaining.github.io/DGE_workshop/lessons/02_DGE_count_normalization.html
 #youtube explanation: https://www.youtube.com/watch?v=UFB993xufUU
@@ -170,8 +172,9 @@ filtr.expr.c <- as.data.frame(normalized_counts[, 52:102])
 #they had the same names as the normal samples
 colnames(filtr.expr.c) <- substr(colnames(filtr.expr.c), 1,12)
 
-#4: Gene selection ----
+#2: Differentially Expressed Genes (DEGs) ----
 
+#Gene selection
 genes <- read.csv2("targets.csv", row.names = 1)
 genes <- genes[,1]
 head(genes) #gene symbols, not ensemble ids
@@ -188,9 +191,9 @@ genes.n <- intersect(rownames(filtr.expr.n),
 
 setdiff(genes.c, genes.n)
 
-length(genes)
-length(genes.c)
-length(genes.n)
+#length(genes)
+#length(genes.c)
+#length(genes.n)
 
 filtr.expr.n <- filtr.expr.n[genes.n, ]
 filtr.expr.c <- filtr.expr.c[genes.c, ]
@@ -199,14 +202,14 @@ rownames(filtr.expr.n) <- genes.info2[genes.n, "gene_name"]
 rownames(filtr.expr.c) <- genes.info[genes.c, "gene_name"]
 
 
-#5: Differentially expressed genes (DEGs) (+ brief enrichment overview) ----- 
+#Differentially expressed genes (DEGs) (+ brief enrichment overview)
 
 #what are DEGs?
 fc <-  log2(rowMeans(filtr.expr.c) / rowMeans(filtr.expr.n) ) 
 names(fc) <- rownames(filtr.expr.c)
 head(fc)
-#what is the fold change?
 
+#what is the fold change?
 pval.fc <- sapply(1:nrow(filtr.expr.c), function(i) (t.test(as.numeric(filtr.expr.c[i,]), as.numeric(filtr.expr.n[i,]), paired = T ))$p.value)
 pval.fc.fdr <- p.adjust(pval.fc, method="fdr")
 
@@ -238,7 +241,7 @@ expr.table$diffexpressed[expr.table$fc <= -1.2 & expr.table$pval.fc.fdr <= 0.05]
 head(expr.table)
 
 expr.table$diffexpressed <- as.factor(expr.table$diffexpressed)
-summary(expr.table$diffexpressed)
+#summary(expr.table$diffexpressed)
 
 ggplot(data=expr.table, aes(x=fc, y=-log10(pval.fc.fdr), col=diffexpressed))+  
   geom_point() +
@@ -250,13 +253,14 @@ ggplot(data=expr.table, aes(x=fc, y=-log10(pval.fc.fdr), col=diffexpressed))+
 
 
 # print and enrichment 
-cat(deg.genes , sep = "\n")
+#cat(deg.genes , sep = "\n")
 #enrichR
 
 
 
-#6: Adjacency matrices of co-expression networks -----
+#3: Co-expression networks -----
 
+#Adjacency matrices of co-expression networks
 #### --- Cancer network
 
 #Creating the correlation matrix for the “cancer” group
@@ -272,16 +276,8 @@ qval.c <- cor.mat.c$p
 #qvals are reported on the upper triangle only
 qval.c[lower.tri(qval.c)] <- t(qval.c)[lower.tri(qval.c)]
 
-#Creating the adjacency matrix for the “cancer” group
-#adj.mat.c <- rho.c * (qval.c <= 0.01)
-#adj.mat.c <- ifelse(abs(rho.c) >= 0.7, 1, 0)
-#sum(adj.mat.c) #1760
-
-#adj.mat.c1 <- ifelse(abs(rho.c) >= 0.7 * (qval.c >= 0.01), 1, 0)
-#sum(adj.mat.c1) #37190
-
 adj.mat.c <- ifelse(abs(rho.c) >= 0.65, 1, 0) * (qval.c <= 1e-4)
-#sum(adj.mat.c) #1760
+#sum(adj.mat.c) #3526
 
 
 #### --- Normal network 
@@ -295,38 +291,49 @@ qval.n[lower.tri(qval.n)] <- t(qval.n)[lower.tri(qval.n)]
 
 adj.mat.n <- ifelse(abs(rho.n) >= 0.65, 1, 0) * (qval.n <= 1e-4)
 
-#7: Co-expression networks ----
+
+#Co-expression networks
 
 #Cancer network 
-
 net.c <- network(adj.mat.c, matrix.type="adjacency",ignore.eval = FALSE, 
                  names.eval = "weights", directed = F)
 
 network.density(net.c)
+#0.001472384
 network.size(net.c)
+#1548
 network.edgecount(net.c) 
-#nrow(component.largest(net.c, result = "graph")) #1446
+#1763
+nrow(component.largest(net.c, result = "graph")) 
+#551
 clustcoeff(adj.mat.c, weighted = FALSE)$CC
+#0.1225775
 
 sum(adj.mat.c != 0) / 2
+#1763
 #how many positive/negative correlations? 
 sum(adj.mat.c > 0) / 2
+#1763
 sum(adj.mat.c < 0) / 2
+#0
 
 degree.c <- rowSums(adj.mat.c != 0)
 names(degree.c) <- rownames(adj.mat.c)
 degree.c <- sort(degree.c, decreasing = T)
 head(degree.c,10)
-sum(degree.c == 0) #81 unconnected nodes 
+sum(degree.c == 0) 
+#814 unconnected nodes 
 
 hist(degree.c)
 x <- quantile(degree.c[degree.c>0],0.95) #how big is the degree of the most connected nodes?
 x
+# 95% 
+# 18.35
 hist(degree.c)
 abline(v=x, col="red")
 
 hubs.c <- degree.c[degree.c>=x]
-names(hubs.c) #
+head(names(hubs.c),10) #
 
 net.c %v% "type" = ifelse(network.vertex.names(net.c) %in% names(hubs.c),"hub", "non-hub")
 net.c %v% "color" = ifelse(net.c %v% "type" == "hub", "tomato", "deepskyblue3")
@@ -364,34 +371,44 @@ ggnet2(net.c2, color = "deepskyblue3", alpha = 0.7, size = 2,
 
 
 #Normal network 
-
 net.n <- network(adj.mat.n, matrix.type="adjacency",ignore.eval = FALSE, names.eval = "weights")
 
 network.density(net.n)
+#0.0178657
 network.size(net.n)
+#1548
 network.edgecount(net.n)
+#42784
 clustcoeff(adj.mat.n, weighted = FALSE)$CC
-#nrow(component.largest(net.n, result = "graph")) #1396
+#0.3631008
+nrow(component.largest(net.n, result = "graph")) 
+#1412
 
 sum(adj.mat.n != 0) /2
+#21392
 #how many positive/negative correlations? 
 sum(adj.mat.n > 0) /2
+#21392
 sum(adj.mat.n < 0) /2
+#0
 
 degree.n <- rowSums(adj.mat.n != 0)
 names(degree.n) <- rownames(adj.mat.n)
 degree.n <- sort(degree.n, decreasing = T)
 head(degree.n,10)
-sum(degree.n == 0) #unconnected nodes 
+sum(degree.n == 0) 
+#132 unconnected nodes 
 
 hist(degree.n)
 y <- quantile(degree.n[degree.n>0],0.95) #how big is the degree of the most connected nodes?
 y
+# 95% 
+# 87 
 hist(degree.n)
 abline(v=y, col="red")
 
 hubs.n <- degree.n[degree.n>=y]
-names(hubs.n) #
+head(names(hubs.n),10) #
 
 net.n %v% "type" = ifelse(network.vertex.names(net.n) %in% names(hubs.n),"hub", "non-hub")
 net.n %v% "color" = ifelse(net.n %v% "type" == "hub", "tomato", "deepskyblue3")
@@ -409,8 +426,7 @@ adj.mat.n <- rho.c * (qval.c <= 1e-4) #too much?
 intersect(names(hubs.c), names(hubs.n))
 
 
-#8: Plotting the hub subnetwork -----
-
+#Plotting the hub subnetwork
 hubs.c
 hubs.c.ids <- vector("integer",length(hubs.c))
 for (i in 1:length(hubs.c)){hubs.c.ids[i] <- match(names(hubs.c)[i],rownames(adj.mat.c))}
@@ -434,10 +450,13 @@ head(rownames(hub.c.adj))
 head(colnames(hub.c.adj))
 
 net.hub <- network(hub.c.adj, matrix.type="adjacency",ignore.eval = FALSE, names.eval = "weights")
-network.density(net.hub)
 
+network.density(net.hub)
+#0.0569854
 sum(hub.c.adj > 0 )
+#2068
 sum(hub.c.adj < 0)
+#0
 
 net.hub %v% "type" = ifelse(network.vertex.names(net.hub) %in% names(hubs.c),"hub", "non-hub")
 net.hub %v% "color" = ifelse(net.hub %v% "type" == "non-hub", "deepskyblue3", "tomato")
@@ -447,3 +466,131 @@ ggnet2(net.hub,  color = "color",alpha = 0.9, size = 2,
        edge.color = "ecolor", edge.alpha = 0.9,  edge.size = 0.15, 
        node.label = names(hubs.c), label.color = "black", label.size = 3)+
   guides(size = "none") 
+
+
+#4: Differential Co-expressed Network ---------------------------------------
+
+#Fisher Z-transformation
+##for Cancer
+z.cancer <- 0.5 * log((1 + rho.c) / (1 - rho.c))
+##for Normal
+z.normal <- 0.5 * log((1 + rho.n) / (1 - rho.n))
+
+#Z-scores to evaluate the correlation
+##Formula Z
+z.diff.formula <- function(zc, zn, fec, fen){
+  n.cancer <- ncol(fec)
+  n.normal <- ncol(fen)
+  out <- (zc - zn) / sqrt((1 / (n.cancer - 3)) + (1 / (n.normal - 3)))
+  return(out)
+}
+##Calculate
+z.diff <- z.diff.formula(z.cancer, z.normal, filtr.expr.c, filtr.expr.n)
+
+#Binary adjacency matrix with aij=0 if |Z|<3
+adj.diff.mat <- ifelse(abs(z.diff) >= 3, 1, 0)
+#diag(adj.diff.mat) <- 0
+
+
+degree.diff.mat <- rowSums(adj.diff.mat)
+####Taken from Damian file
+hist(degree.diff.mat, breaks = 30, main = "Degree Distribution (DCN)", xlab = "Degree", ylab = "Frequency")
+####
+
+#Differential Network 
+net.diff <- network(adj.diff.mat, matrix.type="adjacency",ignore.eval = FALSE, names.eval = "weights")
+
+network.density(net.diff)
+#0.05530584
+network.size(net.diff)
+#1548
+network.edgecount(net.diff)
+#132444
+clustcoeff(adj.diff.mat, weighted = FALSE)$CC
+#0.1387713
+nrow(component.largest(net.diff, result = "graph")) 
+#1548
+
+sum(adj.diff.mat != 0) /2
+#66222
+#how many positive/negative correlations? 
+sum(adj.diff.mat > 0) /2
+#66222
+sum(adj.diff.mat < 0) /2
+#0
+
+degree.diff <- rowSums(adj.diff.mat != 0)
+names(degree.diff) <- rownames(adj.diff.mat)
+degree.diff <- sort(degree.diff, decreasing = T)
+head(degree.diff,10)
+sum(degree.diff == 0) 
+#0 unconnected nodes 
+
+hist(degree.diff)
+z <- quantile(degree.diff[degree.diff>0],0.95) #how big is the degree of the most connected nodes?
+z
+# 95% 
+# 174 
+hist(degree.diff)
+abline(v=z, col="red")
+
+hubs.diff <- degree.diff[degree.diff>=z]
+head(names(hubs.diff),10) #
+
+net.diff %v% "type" = ifelse(network.vertex.names(net.diff) %in% names(hubs.diff),"hub", "non-hub")
+net.diff %v% "color" = ifelse(net.diff %v% "type" == "hub", "tomato", "deepskyblue3")
+set.edge.attribute(net.diff, "edgecolor", ifelse(net.diff %e% "weights" > 0, "red", "blue"))
+
+ggnet2(net.diff, color = "color", alpha = 0.7, size = 2,
+       edge.color = "edgecolor", edge.alpha = 1, edge.size = 0.15)+
+  guides(size = "none") 
+
+#this is extremely dense... what if we change the pval threshold?
+adj.mat.diff <- rho.c * (qval.c <= 1e-3) 
+adj.mat.diff <- rho.c * (qval.c <= 1e-4) #too much?
+
+
+#intersect(names(hubs.c), names(hubs.n))
+
+
+#Plotting the hub subnetwork
+hubs.diff
+hubs.diff.ids <- vector("integer",length(hubs.diff))
+for (i in 1:length(hubs.diff)){hubs.diff.ids[i] <- match(names(hubs.diff)[i],rownames(adj.mat.diff))}
+hubs.diff.ids
+
+#identifying the neighborhood
+hubs.diff.neigh <- c()
+for (f in hubs.diff.ids){
+  hubs.diff.neigh <- append(hubs.diff.neigh, get.neighborhood(net.diff, f))
+}
+
+hubs.diff.neigh <- unique(hubs.diff.neigh)
+hubs.diff.neigh
+hubs.diff.neigh.names <- rownames(adj.mat.diff[hubs.diff.neigh,])
+subnet.diff <- unique(c(names(hubs.diff), hubs.diff.neigh.names))
+
+#creating the subnetwork
+hub.diff.adj <- adj.mat.diff[subnet.diff, subnet.diff]
+
+head(rownames(hub.diff.adj))
+head(colnames(hub.diff.adj))
+
+net.hub.diff <- network(hub.diff.adj, matrix.type="adjacency",ignore.eval = FALSE, names.eval = "weights")
+network.density(net.hub)
+#0.0569854
+
+sum(hub.diff.adj > 0)
+#3306
+sum(hub.diff.adj < 0)
+#180
+
+net.hub.diff %v% "type" = ifelse(network.vertex.names(net.hub.diff) %in% names(hubs.diff),"hub", "non-hub")
+net.hub.diff %v% "color" = ifelse(net.hub.diff %v% "type" == "non-hub", "deepskyblue3", "tomato")
+set.edge.attribute(net.hub.diff, "ecolor", ifelse(net.hub.diff %e% "weights" > 0, "red", "blue"))
+
+ggnet2(net.hub.diff,  color = "color",alpha = 0.9, size = 2, 
+       edge.color = "ecolor", edge.alpha = 0.9,  edge.size = 0.15, 
+       node.label = names(hubs.diff), label.color = "black", label.size = 3)+
+  guides(size = "none") 
+
