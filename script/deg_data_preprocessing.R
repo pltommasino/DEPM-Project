@@ -1,5 +1,8 @@
 #Here we import the necessary libraries
 library(DESeq2)
+library(ggplot2)
+library(ggrepel)
+library(latex2exp)
 library(TCGAbiolinks)
 library(SummarizedExperiment)
 
@@ -9,6 +12,8 @@ library(SummarizedExperiment)
 # - Gene expression data for solid tissue normal samples
 #The workflow type indicates the method used to generate the data. In this case, the data was generated using the STAR aligner and the counts were quantified.
 
+#First, we make sure we are in the correct working directory
+setwd("~/Documents/Master/DigitalEpidemiology/DEPM-Project")
 #Here we create a directory to store the data for the LUSC project
 proj <- "TCGA-LUSC"
 dir.create(file.path(proj))
@@ -40,7 +45,10 @@ rna.expr.data.N <- assay(rna.data.N)
 #It is of interest also to know the genes that are being analyzed
 genes.info.N <- BiocGenerics::as.data.frame(rowRanges(rna.data.N))
 
-
+#Finally, we download clinical data in case we need it at a later stage
+clinical.query <- GDCquery_clinic(project = proj, type = "clinical", save.csv=FALSE)
+#Here we save it
+write.csv(clinical.query, file = file.path(proj,paste(proj, "_clinical_data.txt",sep="")), row.names = FALSE, quote = FALSE)
 
 ## PART 2: Data Preprocessing -----
 #Here we preprocess the data to ensure that it is in a suitable format for analysis
@@ -75,44 +83,106 @@ colnames(expr.N) <- substr(colnames(expr.N), 1,12)
 #Here we make sure to consider only patients for which we have both normal and cancer samples
 expr.C <- expr.C[, colnames(expr.N)]
 
-#Now we combine both datasets
+#Now we combine both datasets. Since patients have the same names in both datasets, we add a suffic to the cancerous samples
+colnames(expr.C) <- paste0(colnames(expr.C), ".C")
 full.data <- cbind(expr.N, expr.C)
 full.data <- data.frame(full.data)
 
 ## PART 3: Data Normalization ---
-#Here we use the DESEQ2 package to normalize the data
-
-
-metad <- rep("cancer", ncol(full.data))
-metad[1:(ncol(full.data)/2)] <- "normal"
+#Here we use the DESEQ2 package to normalize the data. To use this, we create a metadata dataframe with the condition of the samples
+sample_number <- ncol(full.data)
+metad <- rep("cancer", sample_number)
+metad[1:(sample_number/2)] <- "normal"
 metad <- data.frame(metad)
 rownames(metad) <- colnames(full.data)
 colnames(metad)[1] <- "condition"
 metad[,1] <- as.factor(metad[,1])
 
+#Now we create a DESeqDataSet object
 full.data <- cbind(rownames(full.data), full.data)
-
 dds <- DESeqDataSetFromMatrix(countData=full.data, 
                               colData=metad, 
                               design= ~condition,
                               tidy=TRUE)
 
-View(counts(dds))
-dim(counts(dds))
-
-# filtering: at least ten counts on 90% of patients? 
-( 38*90 )/100
-keep <- rowSums(counts(dds) >= 10) >= 34
+#Here we filter the data to remove genes with low counts. Specifically, we remove genes with less than 10 counts in 90% of the samples
+keep <- rowSums(counts(dds) >= 10) >= round((sample_number*90 )/100)
 dds <- dds[keep,]
-dim(counts(dds))
-
+#Now we normalize the data
 dds <- estimateSizeFactors(dds)
 normalized_counts <- counts(dds, normalized=TRUE)
-sum(rowSums(normalized_counts == 0) == 38) #no null rows
 
+#We separate the data into normal and cancerous samples
+filtr.expr.n <- as.data.frame(normalized_counts[, 1:(sample_number/2)])
+filtr.expr.c <- as.data.frame(normalized_counts[, (sample_number/2 +1):sample_number])
 
-filtr.expr.n <- as.data.frame(normalized_counts[, 1:19])
-filtr.expr.c <- as.data.frame(normalized_counts[, 20:38])
-#cancerous sample names were added a ".1" in full.data because  
-#they had the same names as the normal samples
+#Since cancerous sample names were added a ".C", we remove it
 colnames(filtr.expr.c) <- substr(colnames(filtr.expr.c), 1,12)
+
+##PART 4: Gene Selection ----
+#Now, we just rename the genes so we can interpret our results
+#We use the targets.csv file given in the lab to map the gene names to the gene ids
+genes <- read.csv2("data/targets.csv", row.names =1)[,1]
+
+#Here we filter the genes that are in the list of genes we are interested in
+genes.c <- intersect(rownames(filtr.expr.c), 
+                     genes.info.C[ genes.info.C$gene_name %in% genes, "gene_id"])
+genes.n <- intersect(rownames(filtr.expr.n),
+                     genes.info.N[ genes.info.N$gene_name %in% genes, "gene_id"])
+
+#Here we select the genes that are in the list of genes we are interested in
+filtr.expr.c <- filtr.expr.c[genes.c,]
+filtr.expr.n <- filtr.expr.n[genes.n,]
+
+#Now we rename the rows to the gene names
+rownames(filtr.expr.c) <- genes.info.C[genes.c, "gene_name"]
+rownames(filtr.expr.n) <- genes.info.N[genes.n, "gene_name"]
+
+##PART 5: Differentially Expressed Genes (DEGs) ----
+#To obtain the DEGs first we obtain the fold change
+fc <-  log2(rowMeans(filtr.expr.c) / rowMeans(filtr.expr.n) ) 
+names(fc) <- rownames(filtr.expr.c)
+
+#Now we perform a t-test between the normal and cancerous samples to obtain the p-values
+pval.fc <- sapply(1:nrow(filtr.expr.c), function(i) (t.test(as.numeric(filtr.expr.c[i,]), as.numeric(filtr.expr.n[i,]), paired = T ))$p.value)
+#We need to adjust the p-values to account for multiple testing.
+pval.fc.fdr <- p.adjust(pval.fc, method="fdr")
+
+#Here we create a table with the results of the t-test and fold change of the genes
+expr.table <- data.frame(cbind(fc, pval.fc.fdr))
+#We select as DEGs those genes with a fold change greater than 1.2 and a p-value less than 0.05
+deg.genes <- rownames(expr.table[abs(expr.table$fc) >= 1.2 & expr.table$pval.fc.fdr <=0.05,]) 
+#Here we save the list
+write.table(expr.table[deg.genes,], file = "data/DEG.csv", sep = ";")
+#We can also save the normalized counts for the DEGs
+deg.expr.c <- filtr.expr.c[deg.genes, ]
+deg.expr.n <- filtr.expr.n[deg.genes, ]
+#We save them individually as .RData files
+save(deg.expr.c, file = "data/deg_expr_c.RData")
+save(deg.expr.n, file = "data/deg_expr_n.RData")
+
+##PART 6: Visualization (Volcano Plot) ----
+#Here we create a volcano plot to visualize the DEGs. First we display the genes that are not DEGs
+expr.table$diffexpressed <- "No"
+expr.table$diffexpressed[expr.table$fc >= 1.2 & expr.table$pval.fc.fdr <= 0.05] <- "Up"
+expr.table$diffexpressed[expr.table$fc <= -1.2 & expr.table$pval.fc.fdr <= 0.05] <- "Down"
+expr.table$diffexpressed <- as.factor(expr.table$diffexpressed)
+
+#We plot
+ggplot(data=expr.table, aes(x=fc, y=-log10(pval.fc.fdr), col=diffexpressed), label=rownames(expr.table)) + 
+  theme_bw() +
+  geom_point(alpha=0.8) +
+  #Here we add the labels for the DEGs that have a fold change greater than 1.2 and a p-value less than 0.05
+  geom_text_repel(data=expr.table[abs(expr.table$fc) >= 2.5& expr.table$pval.fc.fdr <=1e-15,], aes(label=rownames(expr.table[abs(expr.table$fc) >= 2.5 & expr.table$pval.fc.fdr <=1e-15,])), box.padding = 0.5, point.padding = 0.5, segment.size = 0.5, size=3, show.legend = FALSE) +
+  xlim(c(-6,6)) +
+  labs(x=TeX(r"(Fold Change ($\log_2$))"),
+       y=TeX(r"(-$\log_{10}(p_{adj})$)"),
+       color="Expressed") +
+  #Here we add the colors for the differentially expressed genes
+  scale_color_manual(values=c("#fc8d59", "gray", "#91bfdb"))+
+  geom_hline(yintercept=-log10(0.05), col="red", linetype="dashed")+
+  geom_vline(xintercept=1.2, col="red", alpha=0.8, linetype="dashed")+
+  geom_vline(xintercept=-1.2, col="red", alpha=0.8, linetype="dashed")
+
+#We save the plot in high resolution as a pdf and tight layout
+ggsave("figures/volcano_plot.pdf", dpi=300, device="pdf", useDingbats=FALSE)
