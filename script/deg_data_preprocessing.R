@@ -45,11 +45,6 @@ rna.expr.data.N <- assay(rna.data.N)
 #It is of interest also to know the genes that are being analyzed
 genes.info.N <- BiocGenerics::as.data.frame(rowRanges(rna.data.N))
 
-#Finally, we download clinical data in case we need it at a later stage
-clinical.query <- GDCquery_clinic(project = proj, type = "clinical", save.csv=FALSE)
-#Here we save it
-#write.csv(clinical.query, file = file.path(proj,paste(proj, "_clinical_data.txt",sep="")), row.names = FALSE, quote = FALSE)
-
 ## PART 2: Data Preprocessing -----
 #Here we preprocess the data to ensure that it is in a suitable format for analysis
 #We make the following steps:
