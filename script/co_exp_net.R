@@ -330,19 +330,27 @@ ggsave("figures/diff_co_expr_negative.pdf", dpi=300, device="pdf", useDingbats=F
 #We also plot the subnetwork induced by the hubs in the differential network
 #We obtain the hubs of the network i.e. the top 5% of the nodes with the highest degree
 #Since only the signed networks are scale-free, we will only obtain the hubs for the signed network
+#We do it also for the complete network although we doubt it is scale-free
+degree.cutoff.diff <- quantile(V(giant.diff)$degree, 0.95)
 degree.cutoff.diff.positive <- quantile(V(giant.diff.positive)$degree, 0.95)
 degree.cutoff.diff.negative <- quantile(V(giant.diff.negative)$degree, 0.95)
+hubs.diff <- V(giant.diff)[V(giant.diff)$degree >= degree.cutoff.diff]
 hubs.diff.positive <- V(giant.diff.positive)[V(giant.diff.positive)$degree >= degree.cutoff.diff.positive]
 hubs.diff.negative <- V(giant.diff.negative)[V(giant.diff.negative)$degree >= degree.cutoff.diff.negative]
 
 #We take the indices from the hubs
+v.idx.diff.hubs <- V(g.diff)[V(g.diff)$name %in% hubs.diff$name]
 v.idx.diff.positive.hubs <- V(g.diff.positive)[V(g.diff.positive)$name %in% hubs.diff.positive$name]
 v.idx.diff.negative.hubs <- V(g.diff.negative)[V(g.diff.negative)$name %in% hubs.diff.negative$name]
 #We extract the subgraphs
+giant.diff.hubs <- induced.subgraph(g.diff, v.idx.diff.hubs)
 giant.diff.positive.hubs <- induced.subgraph(g.diff.positive, v.idx.diff.positive.hubs)
 giant.diff.negative.hubs <- induced.subgraph(g.diff.negative, v.idx.diff.negative.hubs)
 
 #We extract their degrees and closeness centrality and label them
+V(giant.diff.hubs)$degree <- igraph::degree(giant.diff.hubs)
+V(giant.diff.hubs)$closeness <- igraph::closeness(giant.diff.hubs)
+V(giant.diff.hubs)$label <- V(giant.diff.hubs)$name
 V(giant.diff.positive.hubs)$degree <- igraph::degree(giant.diff.positive.hubs)
 V(giant.diff.positive.hubs)$closeness <- igraph::closeness(giant.diff.positive.hubs)
 V(giant.diff.positive.hubs)$label <- V(giant.diff.positive.hubs)$name
@@ -351,6 +359,20 @@ V(giant.diff.negative.hubs)$closeness <- igraph::closeness(giant.diff.negative.h
 V(giant.diff.negative.hubs)$label <- V(giant.diff.negative.hubs)$name
 
 #We plot the hub subnetworks
+ggraph(giant.diff.hubs, layout = "fr") + 
+  theme_bw() +
+  theme(panel.grid = element_blank(), axis.text = element_blank(), axis.title = element_blank(), axis.ticks = element_blank()) +
+  geom_edge_link(alpha = 0.2) +
+  #The size of the nodes is proportional to the degree.
+  geom_node_point(aes(size = degree, color = closeness), alpha=0.8, show.legend = FALSE)+
+  #We add a sequential color scale for the closeness centrality
+  scale_color_viridis_c(option = "plasma")+
+  #We add the labels
+  geom_node_text(aes(label = label), repel = TRUE, size = 3, max.overlaps = Inf)
+
+#We save the plots in high resolution as a pdf and tight layout
+ggsave("figures/diff_co_expr_hubs.pdf", dpi=300, device="pdf", useDingbats=FALSE)
+
 ggraph(giant.diff.positive.hubs, layout = "fr") + 
   theme_bw() +
   theme(panel.grid = element_blank(), axis.text = element_blank(), axis.title = element_blank(), axis.ticks = element_blank()) +
@@ -382,16 +404,20 @@ ggsave("figures/diff_co_expr_negative_hubs.pdf", dpi=300, device="pdf", useDingb
 
 ##PART 5: Hubs in the Differential Network ----
 #We obtain the hubs of the differential network for degree and closeness centrality
-#Just for the signed networks since they are scale-free
+#Just for the signed networks since they are scale-free (and the complete network for completeness)
 
 #We obtain the hubs of the network i.e. the top 5% of the nodes with the highest degree
+degree.cutoff.diff <- quantile(V(giant.diff)$degree, 0.95)
 degree.cutoff.diff.positive <- quantile(V(giant.diff.positive)$degree, 0.95)
 degree.cutoff.diff.negative <- quantile(V(giant.diff.negative)$degree, 0.95)
+hubs.diff <- V(giant.diff)[V(giant.diff)$degree >= degree.cutoff.diff]
 hubs.diff.positive <- V(giant.diff.positive)[V(giant.diff.positive)$degree >= degree.cutoff.diff.positive]
 hubs.diff.negative <- V(giant.diff.negative)[V(giant.diff.negative)$degree >= degree.cutoff.diff.negative]
 #We do the same for the closeness centrality
+closeness.cutoff.diff <- quantile(V(giant.diff)$closeness, 0.95)
 closeness.cutoff.diff.positive <- quantile(V(giant.diff.positive)$closeness, 0.95)
 closeness.cutoff.diff.negative <- quantile(V(giant.diff.negative)$closeness, 0.95)
+hubs.diff.closeness <- V(giant.diff)[V(giant.diff)$closeness >= closeness.cutoff.diff]
 hubs.diff.positive.closeness <- V(giant.diff.positive)[V(giant.diff.positive)$closeness >= closeness.cutoff.diff.positive]
 hubs.diff.negative.closeness <- V(giant.diff.negative)[V(giant.diff.negative)$closeness >= closeness.cutoff.diff.negative]
 
@@ -416,6 +442,17 @@ hubs.df.diff.negative <- hubs.df.diff.negative[hubs.df.diff.negative$name %in% h
 hubs.df.diff.negative$is_degree <- ifelse(hubs.df.diff.negative$name %in% hubs.diff.negative$name, 1, 0)
 #Now we add a is_closeness column to indicate if the gene is a hub by closeness centrality
 hubs.df.diff.negative$is_closeness <- ifelse(hubs.df.diff.negative$name %in% hubs.diff.negative.closeness$name, 1, 0)
+
+#Finally for the complete network
+hubs.df.diff <- data.frame(name = V(giant.diff)$name, degree = V(giant.diff)$degree, closeness = V(giant.diff)$closeness)
+#We filter more the genes that are not hubs
+hubs.df.diff <- hubs.df.diff[hubs.df.diff$name %in% hubs.diff$name | hubs.df.diff$name %in% hubs.diff.closeness$name,]
+#Now we add a is_degree column to indicate if the gene is a hub by degree
+hubs.df.diff$is_degree <- ifelse(hubs.df.diff$name %in% hubs.diff$name, 1, 0)
+#Now we add a is_closeness column to indicate if the gene is a hub by closeness centrality
+hubs.df.diff$is_closeness <- ifelse(hubs.df.diff$name %in% hubs.diff.closeness$name, 1, 0)
+
 #We save the hubs
 write.table(hubs.df.diff.negative, file = "data/hubs_diff_negative_coexp.csv", sep = ";")
 write.table(hubs.df.diff.negative, file = "data/hubs_diff_negative_coexp.csv", sep = ";")
+write.table(hubs.df.diff, file = "data/hubs_diff_coexp.csv", sep = ";")
